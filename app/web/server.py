@@ -46,11 +46,12 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz")
     async def health():
+        version = _version()
         try:
             bot = get_bot()
-            return {"ok": True, "bot_ready": bot.is_ready()}
+            return {"ok": True, "bot_ready": bot.is_ready(), "version": version}
         except RuntimeError:
-            return {"ok": True, "bot_ready": False}
+            return {"ok": True, "bot_ready": False, "version": version}
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket, guild: str = "0"):
@@ -106,3 +107,14 @@ def create_app() -> FastAPI:
         return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
+
+
+def _version() -> str:
+    """Kurz-SHA der per Auto-Update geladenen Version (data/.update.json), sonst „lokal“."""
+    import json
+    from pathlib import Path
+
+    try:
+        return json.loads(Path("data/.update.json").read_text())["sha"][:7]
+    except (OSError, ValueError, KeyError):
+        return "lokal"
