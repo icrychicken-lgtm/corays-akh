@@ -174,6 +174,12 @@ class NovaBot(commands.AutoShardedBot):
                 self.module_names.append(info.name)
             except Exception:
                 log.exception("Modul %s konnte nicht geladen werden", name)
+        # Slash-Gruppen (/mod, /media, /ticket …) erben Modul und Hilfe-Kategorie ihres Cogs – sonst zählten sie als „core“
+        for cog in self.cogs.values():
+            for cmd in cog.__cog_app_commands__:
+                if isinstance(cmd, app_commands.Group):
+                    cmd.extras.setdefault("module", getattr(cog, "module", "core"))
+                    cmd.extras.setdefault("help_category", getattr(cog, "help_category", None))
         log.info("%d Module geladen: %s", len(self.module_names), ", ".join(sorted(self.module_names)))
         self.flush_metrics.start()
 
