@@ -1,5 +1,6 @@
-"""Twitch-Kanal ohne OAuth bestätigen: Der Bot liest anonym im Twitch-Chat mit und wartet,
-bis der Kanalbesitzer selbst einen Code schreibt. Braucht weder HTTPS noch Redirect-URL."""
+"""Twitch-Chat anonym mitlesen (kein Token, kein HTTPS nötig):
+- Kanal bestätigen: Der Kanalbesitzer schreibt einen Code in seinen eigenen Chat.
+- Chat-Wächter: Nachrichten im Live-Chat auswerten (Statistik, Warnwörter für Mods)."""
 from __future__ import annotations
 
 import asyncio
@@ -31,13 +32,16 @@ async def wait_for_code(login: str, broadcaster_id: str, code: str, timeout: flo
         return False
 
 
-async def _listen(login: str, broadcaster_id: str, code: str) -> bool:
+async def read_chat(login: str, on_message) -> None:
+    """Liest den Chat von `login` anonym mit und ruft `await on_message(tags, text)` für jede Nachricht auf.
+    Läuft, bis der Task abgebrochen wird oder `on_message` True zurückgibt; verbindet bei Abbrüchen neu."""
+    login = login.lower()
     while True:
         try:
             reader, writer = await asyncio.open_connection(HOST, PORT, ssl=True)
         except OSError as exc:
             log.warning("Twitch-Chat nicht erreichbar: %s", exc)
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
             continue
         try:
             nick = f"justinfan{random.randint(10000, 99999)}"
@@ -51,11 +55,19 @@ async def _listen(login: str, broadcaster_id: str, code: str) -> bool:
                 if " PRIVMSG " not in line or not line.startswith("@"):
                     continue
                 raw_tags, _, rest = line.partition(" ")
-                message = rest.split(" :", 1)[1] if " :" in rest else ""
-                if _tags(raw_tags).get("user-id") == broadcaster_id and code in message.upper():
-                    return True
+                text = rest.split(" :", 1)[1] if " :" in rest else ""
+                if await on_message(_tags(raw_tags), text):
+                    return
         except (OSError, ConnectionError) as exc:
             log.info("Twitch-Chat getrennt, verbinde neu: %s", exc)
         finally:
             writer.close()
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
+
+
+async def _listen(login: str, broadcaster_id: str, code: str) -> bool:
+    async def check(tags: dict[str, str], text: str) -> bool:
+        return tags.get("user-id") == broadcaster_id and code in text.upper()
+
+    await read_chat(login, check)
+    return True

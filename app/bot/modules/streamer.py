@@ -154,16 +154,41 @@ class StreamerCog(commands.Cog, name="StreamerCog"):
             v.add_item(CheckinButton(session_id, label_checkin, disabled=ended))
         return v
 
+    async def ensure_live_channel(self, guild: discord.Guild) -> discord.TextChannel | None:
+        """Kein Live-Channel eingestellt? Vorhandenen #stream-alerts/#live nehmen oder anlegen – sonst gingen Live-Posts ins Leere."""
+        cfg = await config.get(guild.id, "streamer")
+        ch = guild.get_channel(cfg.id("default_channel") or 0)
+        if isinstance(ch, discord.TextChannel):
+            return ch
+        ch = next((c for c in guild.text_channels if ("stream-alert" in c.name.lower() or "live-alert" in c.name.lower() or c.name.lower().lstrip("🔴・-_ ").startswith("live"))), None)
+        if ch is None and guild.me.guild_permissions.manage_channels:
+            ow = {guild.default_role: discord.PermissionOverwrite(send_messages=False, add_reactions=True),
+                  guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True, mention_everyone=True)}
+            try:
+                ch = await guild.create_text_channel("🔴・stream-alerts", overwrites=ow, topic="Live-Benachrichtigungen", reason="Kein Live-Channel eingestellt")
+            except discord.HTTPException:
+                return None
+        if ch is not None:
+            data = dict(cfg)
+            data["default_channel"] = str(ch.id)
+            await config.save(guild.id, "streamer", settings=data)
+        return ch
+
     async def _hub(self, hook: str, guild: discord.Guild, *args):
-        """Streamer-Extras (streamhub.py) – Fehler dort dürfen Live-Posts nie blockieren."""
-        hub = self.bot.get_cog("StreamHub")
-        if hub is None:
-            return None
-        try:
-            return await getattr(hub, hook)(guild, *args)
-        except Exception as exc:  # noqa: BLE001
-            await capture_error(exc, guild_id=guild.id, command=f"streamhub.{hook}")
-            return None
+        """Streamer-Extras (streamhub.py, creator.py) – Fehler dort dürfen Live-Posts nie blockieren.
+        Gibt das erste Ergebnis ungleich None zurück."""
+        result = None
+        for name in ("StreamHub", "Creator"):
+            cog = self.bot.get_cog(name)
+            fn = getattr(cog, hook, None) if cog else None
+            if fn is None:
+                continue
+            try:
+                value = await fn(guild, *args)
+                result = value if result is None else result
+            except Exception as exc:  # noqa: BLE001
+                await capture_error(exc, guild_id=guild.id, command=f"{name}.{hook}")
+        return result
 
     # ── Zustandswechsel ──
     async def go_live(self, guild: discord.Guild, s: Streamer, info: StreamInfo) -> None:
@@ -179,7 +204,7 @@ class StreamerCog(commands.Cog, name="StreamerCog"):
             row.is_live, row.current_session_id = True, sess.id
             row.total_streams += 1
         metrics.incr(guild.id, "streams")
-        channel = guild.get_channel(s.announce_channel_id or cfg.id("default_channel") or 0)
+        channel = guild.get_channel(s.announce_channel_id or cfg.id("default_channel") or 0) or await self.ensure_live_channel(guild)
         msg = None
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
             role_id = s.ping_role_id or cfg.id("default_role")
@@ -714,7 +739,11 @@ class StreamerCog(commands.Cog, name="StreamerCog"):
                     return
                 tw = {"id": info.user_id, "login": login, "display_name": info.display_name, "profile_image_url": info.avatar}
                 s = await twitch_link.link_streamer(interaction.guild_id, interaction.user.id, str(interaction.user), tw)
+                await self._hub("on_connect", interaction.guild, interaction.user, s)
+                live_ch = interaction.guild.get_channel(s.announce_channel_id or 0) or await self.ensure_live_channel(interaction.guild)
                 done = th.success(_("stream.verify_done_title"), _("stream.verify_done", channel=s.channel))
+                if live_ch:
+                    done.add_field(name=_("stream.verify_where"), value=live_ch.mention, inline=False)
                 if info.avatar:
                     done.set_thumbnail(url=info.avatar)
                 await interaction.edit_original_response(embed=done, view=None)

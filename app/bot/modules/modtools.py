@@ -9,7 +9,7 @@ from datetime import timedelta
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from sqlalchemy import func, select
 
 from app.bot.ui import confirm, handle_exception, reply
@@ -18,7 +18,7 @@ from app.core.errors import UserError
 from app.core.guild_config import config
 from app.core.i18n import i18n
 from app.core.records import log_event
-from app.core.timeutil import ts
+from app.core.timeutil import parse_duration, ts
 from app.db.base import SessionLocal, session_scope, utcnow
 from app.db.models import ModCase, UserNote
 from app.services import moderation as mod
@@ -140,6 +140,40 @@ class DossierView(discord.ui.View):
                                                         self._("mod.f_reason")))
 
 
+class AnnounceModal(discord.ui.Modal):
+    def __init__(self, _, channel_id: int, ping_role: int | None):
+        super().__init__(title=_("mt.ann_modal")[:45])
+        self.channel_id, self.ping_role = channel_id, ping_role
+        self.head = discord.ui.TextInput(label=_("mt.ann_title")[:45], max_length=200)
+        self.body = discord.ui.TextInput(label=_("mt.ann_text")[:45], style=discord.TextStyle.paragraph, max_length=4000)
+        self.image = discord.ui.TextInput(label=_("mt.ann_image")[:45], required=False, max_length=400, placeholder="https://…")
+        for ti in (self.head, self.body, self.image):
+            self.add_item(ti)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            _ = await i18n.for_guild(interaction.guild_id)
+            th = await theme(interaction.guild)
+            ch = interaction.guild.get_channel(self.channel_id)
+            e = discord.Embed(title=self.head.value, description=self.body.value, colour=th.color("primary"), timestamp=utcnow())
+            e.set_footer(text=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+            if self.image.value.startswith(("http://", "https://")):
+                e.set_image(url=self.image.value)
+            await ch.send(content=f"<@&{self.ping_role}>" if self.ping_role else None, embed=e,  # type: ignore[union-attr]
+                          allowed_mentions=discord.AllowedMentions(roles=True, everyone=False))
+            await log_event(interaction.guild_id, "moderation", "announce", user=interaction.user, channel_id=self.channel_id, content=self.head.value)
+            await reply(interaction, th.success(_("common.success"), _("mt.ann_done", channel=ch.mention)))  # type: ignore[union-attr]
+        except Exception as exc:  # noqa: BLE001
+            await handle_exception(interaction, exc, "announce")
+
+
+async def penalty_choices(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    cfg = await config.get(interaction.guild_id, "moderation")
+    icons = {"warn": "⚠️", "timeout": "⏳", "kick": "👢", "ban": "🔨"}
+    return [app_commands.Choice(name=f"{icons.get(p.get('action'), '•')} {p['name']}"[:100], value=p["name"][:100])
+            for p in cfg.get("penalties") or [] if p.get("name") and current.lower() in p["name"].lower()][:25]
+
+
 class ClaimCall(discord.ui.DynamicItem[discord.ui.Button], template=r"nova:mc:(?P<user>\d+)"):
     def __init__(self, user: int, label: str | None = None):
         super().__init__(discord.ui.Button(label=label, emoji="🙋", style=discord.ButtonStyle.primary, custom_id=f"nova:mc:{user}"))
@@ -178,6 +212,37 @@ class ModTools(commands.Cog, name="ModTools"):
         self.bot = bot
         self._snipes: dict[int, deque] = {}
         self._calls: dict[tuple[int, int], float] = {}
+        self.temp_roles.start()
+
+    def cog_unload(self):
+        self.temp_roles.cancel()
+
+    # ── Temporäre Rollen ──
+    @tasks.loop(minutes=1)
+    async def temp_roles(self):
+        now = utcnow().timestamp()
+        for guild in list(self.bot.guilds):
+            key = f"mt:tr:{guild.id}"
+            items = await config.state(key) or []
+            if not items:
+                continue
+            keep = []
+            for it in items:
+                if it["until"] > now:
+                    keep.append(it)
+                    continue
+                member, role = guild.get_member(it["user"]), guild.get_role(it["role"])
+                if member and role and role in member.roles:
+                    try:
+                        await member.remove_roles(role, reason="Temporäre Rolle abgelaufen")
+                    except discord.HTTPException:
+                        pass
+            if len(keep) != len(items):
+                await config.set_state(key, keep)
+
+    @temp_roles.before_loop
+    async def _before_tr(self):
+        await self.bot.wait_until_ready()
 
     # ── Listener ──
     @commands.Cog.listener()
@@ -627,6 +692,96 @@ class ModTools(commands.Cog, name="ModTools"):
             lines.append(f"{'⚠️' if flags else '✅'} {m.mention} · {_('mt.joined')} {ts(m.joined_at, 'R')} · {_('mt.account')} {ts(m.created_at, 'R')}"
                          + (f"\n╰ {' · '.join(flags)}" if flags else ""))
         await reply(interaction, (await theme(interaction.guild)).embed(_("mt.new_title"), "\n".join(lines)[:4000] or "—", icon=False))
+
+    # ── Strafenkatalog ──
+    @app_commands.command(name="strafe", description="Strafe aus dem Strafenkatalog anwenden (gleiche Strafe für gleiches Vergehen)")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(moderate_members=True)
+    @app_commands.describe(user="Wer?", vorlage="Vergehen aus dem Katalog", notiz="Zusatz zum Grund (optional)")
+    @app_commands.autocomplete(vorlage=penalty_choices)
+    async def penalty(self, interaction: discord.Interaction, user: discord.Member, vorlage: str, notiz: app_commands.Range[str, 0, 300] = ""):
+        await require_staff(interaction)
+        cfg = await config.get(interaction.guild_id, "moderation")
+        p = next((x for x in cfg.get("penalties") or [] if x.get("name", "").lower() == vorlage.lower()), None)
+        if p is None:
+            raise UserError("mt.penalty_unknown")
+        reason = p.get("reason") or p["name"]
+        if notiz:
+            reason = f"{reason} – {notiz}"
+        await interaction.response.defer(ephemeral=True)
+        action = p.get("action", "warn")
+        minutes = int(p.get("minutes") or 0)
+        duration = minutes * 60 if action in ("timeout", "ban") and minutes else None
+        case = await mod.execute(interaction.guild, action, user, interaction.user, reason, duration=duration)
+        await interaction.followup.send(embed=await mod.case_embed(interaction.guild, case, user), ephemeral=True)
+
+    @m.command(name="temprolle", description="Rolle für eine bestimmte Zeit geben (z. B. VIP für 1 Tag)")
+    @app_commands.describe(dauer="z. B. 30m, 2h, 1d, 7d")
+    async def cmd_temprole(self, interaction: discord.Interaction, user: discord.Member, rolle: discord.Role, dauer: str):
+        await require_staff(interaction)
+        _ = await i18n.for_guild(interaction.guild_id)
+        secs = parse_duration(dauer)
+        if not secs or secs < 60 or secs > 365 * 86400:
+            raise UserError("mod.err_duration")
+        actor: discord.Member = interaction.user  # type: ignore[assignment]
+        if rolle >= interaction.guild.me.top_role or rolle.managed or (rolle >= actor.top_role and actor.id != interaction.guild.owner_id):
+            raise UserError("mod.err_forbidden")
+        try:
+            await user.add_roles(rolle, reason=f"Temporär ({dauer}) von {interaction.user}")
+        except discord.HTTPException:
+            raise UserError("mod.err_forbidden") from None
+        key = f"mt:tr:{interaction.guild_id}"
+        items = [x for x in (await config.state(key) or []) if not (x["user"] == user.id and x["role"] == rolle.id)]
+        until = utcnow() + timedelta(seconds=secs)
+        items.append({"user": user.id, "role": rolle.id, "until": until.timestamp()})
+        await config.set_state(key, items)
+        await log_event(interaction.guild_id, "moderation", "temprole", user=interaction.user, target_id=user.id, content=f"{rolle.name} {dauer}")
+        await reply(interaction, (await theme(interaction.guild)).success(_("common.success"), _("mt.temprole_done", user=user.mention, role=rolle.mention, until=ts(until, "R"))))
+
+    @m.command(name="ankuendigung", description="Schöne Ankündigung (Embed) in einen Channel posten")
+    @app_commands.describe(channel="Wohin?", ping="Rolle pingen (optional)")
+    async def cmd_announce(self, interaction: discord.Interaction, channel: discord.TextChannel, ping: discord.Role | None = None):
+        await require_staff(interaction)
+        if not channel.permissions_for(interaction.user).send_messages:  # type: ignore[arg-type]
+            raise UserError("errors.no_permission")
+        _ = await i18n.for_guild(interaction.guild_id)
+        await interaction.response.send_modal(AnnounceModal(_, channel.id, ping.id if ping else None))
+
+    @m.command(name="slowmode-alle", description="Slowmode für alle Text-Channels (z. B. bei Chaos) – 0 = aus")
+    @app_commands.describe(sekunden="0 bis 21600")
+    async def cmd_slow_all(self, interaction: discord.Interaction, sekunden: app_commands.Range[int, 0, 21600]):
+        await require_staff(interaction)
+        if not interaction.user.guild_permissions.manage_channels:  # type: ignore[union-attr]
+            raise UserError("errors.no_permission")
+        _ = await i18n.for_guild(interaction.guild_id)
+        await interaction.response.defer(ephemeral=True)
+        changed = 0
+        for ch in interaction.guild.text_channels:
+            if ch.slowmode_delay == sekunden or not ch.permissions_for(interaction.guild.default_role).send_messages:
+                continue
+            try:
+                await ch.edit(slowmode_delay=sekunden, reason=f"Slowmode für alle von {interaction.user}")
+                changed += 1
+            except discord.HTTPException:
+                pass
+        await log_event(interaction.guild_id, "moderation", "slowmode_all", user=interaction.user, content=str(sekunden))
+        await interaction.followup.send(embed=(await theme(interaction.guild)).success(_("common.success"), _("mt.slow_done", count=changed, seconds=sekunden)), ephemeral=True)
+
+    @m.command(name="warns-leeren", description="Alle aktiven Verwarnungen eines Users aufheben")
+    async def cmd_clear_warns(self, interaction: discord.Interaction, user: discord.User, grund: app_commands.Range[str, 0, 300] = ""):
+        await require_staff(interaction)
+        _ = await i18n.for_guild(interaction.guild_id)
+        async with session_scope() as db:
+            rows = (await db.execute(select(ModCase).where(ModCase.guild_id == interaction.guild_id, ModCase.user_id == user.id,
+                                                           ModCase.action == "warn", ModCase.active.is_(True)))).scalars().all()
+            for r in rows:
+                r.active = False
+                r.updated_at = utcnow()
+        if not rows:
+            raise UserError("mt.no_warns")
+        case = await mod.create_case(interaction.guild, "unwarn", user, interaction.user, grund or _("mt.warns_cleared_reason", count=len(rows)), active=False)
+        await mod.send_modlog(interaction.guild, await mod.case_embed(interaction.guild, case, user))
+        await reply(interaction, (await theme(interaction.guild)).success(_("common.success"), _("mt.warns_cleared", user=user.mention, count=len(rows))))
 
     # ── Mod-Ruf (für alle) ──
     @app_commands.command(name="modruf", description="Ruft das Mod-Team – nur bei echten Problemen!")
