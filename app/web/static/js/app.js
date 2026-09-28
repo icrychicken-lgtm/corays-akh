@@ -1,17 +1,19 @@
 // ───────────────────────── Nova Dashboard – App-Shell, Router, Live-Verbindung ─────────────────────────
 import { h, $, clear, fill, icon, state, api, gapi, t, toast, setAccent, debounce, userCell, fmtDuration, fmtNum, emptyState } from "./core.js";
 
+// Oben nur das Wichtigste (Streams zuerst). Die Abschnitte darunter sind einklappbar (Standard: zu).
 const NAV = [
   ["section_main"],
-  ["dashboard", "🏠", null, "staff"], ["features", "⌨️", null, "staff"], ["members", "👥", null, "staff"], ["moderation", "🛡️", "moderation", "staff"], ["automod", "🤖", "automod", "admin"],
-  ["tickets", "🎫", "tickets", "staff"], ["giveaways", "🎁", "giveaways", "staff"],
+  ["dashboard", "🏠", null, "staff"], ["streamer", "📡", "streamer", "staff"], ["members", "👥", null, "staff"], ["moderation", "🛡️", "moderation", "staff"],
+  ["tickets", "🎫", "tickets", "staff"], ["settings", "⚙️", null, "admin"],
   ["section_community"],
-  ["welcome", "👋", "welcome", "admin"], ["levels", "⭐", "levels", "staff"], ["economy", "💰", "economy", "staff"], ["music", "🎵", "music", "staff"], ["streamer", "📡", "streamer", "staff"],
-  ["suggestions", "💡", "suggestions", "staff"], ["events", "🎉", "events", "staff"],
+  ["levels", "⭐", "levels", "staff"], ["economy", "💰", "economy", "staff"], ["giveaways", "🎁", "giveaways", "staff"], ["suggestions", "💡", "suggestions", "staff"],
+  ["events", "🎉", "events", "staff"], ["welcome", "👋", "welcome", "admin"], ["music", "🎵", "music", "staff"],
   ["section_manage"],
-  ["analytics", "📊", null, "staff"], ["roles", "🎭", "roles", "staff"], ["notifications", "🔔", "notifications", "admin"],
-  ["logs", "📝", "logging", "staff"], ["settings", "⚙️", null, "admin"],
+  ["automod", "🤖", "automod", "admin"], ["notifications", "🔔", "notifications", "admin"], ["logs", "📝", "logging", "staff"], ["roles", "🎭", "roles", "staff"],
+  ["analytics", "📊", null, "staff"], ["features", "⌨️", null, "staff"],
 ];
+const COLLAPSIBLE = new Set(["section_community", "section_manage"]);
 const PAGES = {
   dashboard: () => import("./pages/home.js"), members: () => import("./pages/members.js"), moderation: () => import("./pages/moderation.js"),
   automod: () => import("./pages/automod.js"), tickets: () => import("./pages/tickets.js"), giveaways: () => import("./pages/giveaways.js"),
@@ -125,11 +127,35 @@ async function shell(ctx) {
   const gid = ctx ? ctx.guild.id : null;
   const nav = h("nav.nav");
   if (ctx) {
+    const current = location.pathname.split("/")[3] || "dashboard";
+    let target = nav;
     for (const item of NAV) {
-      if (item.length === 1) { nav.append(h("div.nav-section", t(item[0]))); continue; }
+      if (item.length === 1) {
+        const sec = item[0];
+        if (!COLLAPSIBLE.has(sec)) { nav.append(h("div.nav-section", t(sec))); target = nav; continue; }
+        // Einklappbarer Abschnitt: Zustand pro Browser merken, offen wenn die aktuelle Seite darin liegt
+        const start = NAV.indexOf(item) + 1;
+        const end = NAV.findIndex((x, i) => i >= start && x.length === 1);
+        const pages = NAV.slice(start, end === -1 ? undefined : end).map((x) => x[0]);
+        let open = pages.includes(current);
+        try { open = open || localStorage.getItem(`nova:nav:${sec}`) === "1"; } catch {}
+        const body = h("div", { hidden: !open });
+        const arrow = h("span", { style: { float: "right" } }, open ? "▾" : "▸");
+        const head = h("div.nav-section", { role: "button", tabindex: 0, style: { cursor: "pointer", userSelect: "none" } }, t(sec), arrow);
+        const toggle = () => {
+          body.hidden = !body.hidden;
+          arrow.textContent = body.hidden ? "▸" : "▾";
+          try { localStorage.setItem(`nova:nav:${sec}`, body.hidden ? "0" : "1"); } catch {}
+        };
+        head.addEventListener("click", toggle);
+        head.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggle()));
+        nav.append(head, body);
+        target = body;
+        continue;
+      }
       const [key, , module, level] = item;
       if (level === "admin" && ctx.level !== "admin") continue;
-      nav.append(h("a", { href: `/g/${gid}/${key === "dashboard" ? "" : key}`.replace(/\/$/, ""), "data-link": true, dataset: { page: key, module: module || "" } },
+      target.append(h("a", { href: `/g/${gid}/${key === "dashboard" ? "" : key}`.replace(/\/$/, ""), "data-link": true, dataset: { page: key, module: module || "" } },
         icon(key), h("span", t(key)), module ? h("i.dot" + (ctx.modules[module] ? ".on" : "")) : null));
     }
   }

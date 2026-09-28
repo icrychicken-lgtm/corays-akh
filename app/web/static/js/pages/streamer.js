@@ -7,7 +7,7 @@ export async function render(root) {
   const admin = state.ctx.level === "admin";
   const body = h("div");
   const items = [["stats", "📈 Stream-Stats"]];
-  if (admin) items.push(["streamers", "📡 Streamer verbinden"], ["settings", "⚙️ Live-Benachrichtigung"]);
+  if (admin) items.push(["streamers", "📡 Streamer verbinden"], ["settings", "⚙️ Live-Benachrichtigung"], ["clipcontest", "🎬 Clip-Contest"]);
   const show = (k) => ({
     stats: () => stats(body),
     streamers: () => collection(body, "streamers", { createLabel: "Streamer hinzufügen",
@@ -22,6 +22,12 @@ export async function render(root) {
           `Media-Rolle und Panel-Channel unten einstellen, speichern, dann Panel senden. Wichtig: In der Twitch-Developer-Console muss als Redirect-URL ${location.origin}/twitch/callback eingetragen sein.`)),
         btn)) });
     },
+    clipcontest: () => moduleSettings(body, "clipcontest", { extra: h("div.callout.gold", h("b", "So läuft der Clip-Contest"),
+      h("div.muted", { style: { marginTop: "6px", lineHeight: 1.6 } },
+        "1. Hier unten Prüf-Channel und Geld-Stufen einstellen und speichern. ",
+        "2. In Discord starten: /clipcontest start name:… dauer:60d. ",
+        "3. Clips landen im Prüf-Channel – dort Annehmen/Ablehnen klicken. ",
+        "4. Am Ende zeigt /clipcontest auszahlung, wer wie viel bekommt.")) }),
   })[k]();
   fill(root, h("div.page-head", h("div", h("h2", "📡 Streamer"), h("p", "Twitch, YouTube & Kick: Live-Posts, Rollen, Channel-Umbenennung und Statistiken."))), tabs(items, "stats", show), body);
   show("stats");

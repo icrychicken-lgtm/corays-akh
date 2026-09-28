@@ -186,10 +186,10 @@ function objList(f, rows) {
   return { el: wrap, get: () => items.map((it) => Object.fromEntries(it.sub.map(({ sf, w }) => [sf.key, w.get()]))) };
 }
 
-// Vollständiges Formular mit Gruppen
+// Vollständiges Formular mit Gruppen. Felder mit `advanced` stehen eingeklappt unter „Mehr Optionen“.
 export function renderForm(fields, values = {}) {
   const widgets = new Map();
-  const groups = new Map();
+  const groups = { basic: new Map(), advanced: new Map() };
   for (const f of fields) {
     const w = widget(f, values[f.key]);
     const errEl = h("div.err", { hidden: true });
@@ -197,12 +197,21 @@ export function renderForm(fields, values = {}) {
     const field = h("div.field" + (wide ? ".full" : ""), f.type === "bool"
       ? [h("div.row.between", h("label", { style: { fontWeight: 550 } }, f.label), w.el)]
       : [h("label", f.label), w.el], f.help ? h("div.help", f.help) : null, errEl);
-    widgets.set(f.key, { w, field, errEl });
+    widgets.set(f.key, { w, field, errEl, advanced: !!f.advanced });
+    const bucket = groups[f.advanced ? "advanced" : "basic"];
     const g = f.group || "";
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g).push(field);
+    if (!bucket.has(g)) bucket.set(g, []);
+    bucket.get(g).push(field);
   }
-  const el = h("div", [...groups.entries()].map(([g, els]) => h("div.form-group", g ? h("h4", g) : null, h("div.form-grid", els))));
+  const section = (map) => [...map.entries()].map(([g, els]) => h("div.form-group", g ? h("h4", g) : null, h("div.form-grid", els)));
+  const moreCount = [...groups.advanced.values()].reduce((n, els) => n + els.length, 0);
+  const more = h("div", { hidden: true }, section(groups.advanced));
+  const moreBtn = h("button.btn.ghost", { type: "button", style: { width: "100%", marginBottom: "16px" } });
+  const setMore = (open) => { more.hidden = !open; moreBtn.textContent = open ? "▲ Weniger anzeigen" : `⚙️ Mehr Optionen anzeigen (${moreCount})`; };
+  moreBtn.addEventListener("click", () => setMore(more.hidden));
+  setMore(false);
+  const el = h("div", section(groups.basic), moreCount ? [moreBtn, more] : null);
+  const openMore = () => setMore(true);
   return {
     el,
     getValues: () => Object.fromEntries([...widgets.entries()].map(([k, { w }]) => [k, w.get()])),
@@ -214,6 +223,7 @@ export function renderForm(fields, values = {}) {
         errEl.textContent = msg || "";
       }
       const first = Object.keys(errors)[0];
+      if (first && widgets.get(first)?.advanced) openMore();  // Fehler in eingeklapptem Feld sichtbar machen
       if (first) widgets.get(first)?.field.scrollIntoView({ behavior: "smooth", block: "center" });
     },
   };

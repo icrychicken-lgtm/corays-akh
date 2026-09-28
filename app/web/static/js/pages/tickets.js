@@ -33,7 +33,7 @@ async function panelEditor(el) {
   const mods = await modules(true);
   const m = mods.find((x) => x.key === "tickets");
   let cats = [];
-  const form = renderForm(m.fields.filter((f) => PANEL_GROUPS[f.key]).map((f) => ({ ...f, group: PANEL_GROUPS[f.key] })), m.settings);
+  const form = renderForm(m.fields.filter((f) => PANEL_GROUPS[f.key]).map((f) => ({ ...f, group: PANEL_GROUPS[f.key], advanced: false })), m.settings);
   const catBox = h("div");
   const addDefaults = h("button.btn", "Standard-Kategorien hinzufügen");
   addDefaults.addEventListener("click", () => withLoading(addDefaults, async () => {

@@ -29,6 +29,7 @@ class F:
     group: str = ""
     fields: list["F"] | None = None  # für objlist
     placeholder: str = ""
+    advanced: bool = False  # im Dashboard hinter „Mehr Optionen“ (gesetzt über BASIC unten)
 
     def to_json(self) -> dict[str, Any]:
         d = asdict(self)
@@ -523,6 +524,126 @@ MODULES: list[ModuleSpec] = [
     ]),
     ModuleSpec("fun", "Fun", "🎲", "8ball, Würfel, Ship, Rate …", fields=[]),
 ]
+
+# ───────────────────────── Einfach-Modus ─────────────────────────
+# Pro Modul die wichtigsten Felder mit einem kurzen Erklärsatz. Alle anderen Felder dieser Module landen im
+# Dashboard hinter „Mehr Optionen“. Module, die hier fehlen, sind klein genug und zeigen alles.
+BASIC: dict[str, dict[str, str]] = {
+    "general": {
+        "language": "In welcher Sprache der Bot antwortet.",
+        "admin_roles": "Wer mit dieser Rolle darf alles im Dashboard ändern.",
+        "staff_roles": "Dein Team: darf moderieren, Tickets bearbeiten usw.",
+        "color_primary": "Die Hauptfarbe der Bot-Nachrichten.",
+    },
+    "streamer": {
+        "default_channel": "Hier postet der Bot, wenn du live gehst.",
+        "default_role": "Diese Rolle wird beim Live-Post gepingt. Leer = kein Ping.",
+        "style": "Wie die Live-Nachricht aussieht.",
+        "message": "Eigener Text für den Live-Post. Leer lassen = fertiger Text passend zum Stil.",
+        "clips_enabled": "Neue Twitch-Clips automatisch posten.",
+        "clips_channel": "Hier landen die Twitch-Clips.",
+        "checkin_enabled": "Zuschauer klicken „Ich bin dabei“ und bekommen XP & Coins.",
+        "live_thread": "Unter jedem Live-Post ein Thread zum Quatschen.",
+    },
+    "clipcontest": {
+        "review_channel": "Hier landen eingereichte Clips – dein Team klickt Annehmen/Ablehnen. Am besten ein Team-Channel.",
+        "announce_channel": "Hier kommen Ankündigung und Ergebnisse hin.",
+        "platforms": "Welche Links man einreichen darf.",
+        "max_per_user": "Wie viele Clips eine Person einreichen darf.",
+        "pay_tiers": "Wie viel Geld ein Clip ab wie vielen Aufrufen bringt. Die höchste erreichte Stufe zählt.",
+        "streamer_name": "Dein Name – steht in der Ankündigung.",
+        "hashtag": "Hashtag, den alle unter ihren Clip schreiben müssen.",
+    },
+    "notifications": {
+        "video_enabled": "Posten, wenn ein neues YouTube-Video rauskommt.",
+        "video_channel": "Hier kommen neue Videos hin.",
+        "video_role": "Diese Rolle wird bei neuen Videos gepingt.",
+        "short_enabled": "Posten, wenn ein neuer Short rauskommt.",
+        "short_channel": "Hier kommen neue Shorts hin.",
+        "short_role": "Diese Rolle wird bei neuen Shorts gepingt.",
+    },
+    "moderation": {
+        "log_channel": "Hier sieht dein Team alle Warns, Timeouts und Bans.",
+        "dm_users": "Bestrafte User bekommen eine DM mit dem Grund.",
+        "default_timeout": "So lange dauert ein Timeout, wenn man keine Zeit angibt.",
+    },
+    "automod": {
+        "spam_enabled": "Löscht, wenn jemand viele Nachrichten schnell hintereinander schickt.",
+        "invites_enabled": "Löscht Einladungen zu anderen Discord-Servern.",
+        "links_enabled": "Löscht Links, die nicht erlaubt sind.",
+        "scam_enabled": "Löscht bekannte Scam-Links (Fake-Nitro usw.).",
+        "badwords_enabled": "Löscht Nachrichten mit verbotenen Wörtern.",
+        "badwords_list": "Die verbotenen Wörter – eins pro Zeile.",
+        "mass_mentions_enabled": "Stoppt @everyone/@here von normalen Mitgliedern.",
+        "exempt_roles": "Diese Rollen werden nie vom Automod erwischt (z. B. dein Team).",
+    },
+    "logging": {
+        "default_channel": "Hier protokolliert der Bot, was auf dem Server passiert (gelöschte Nachrichten, Joins …).",
+        "ignore_bots": "Nachrichten von Bots nicht protokollieren.",
+    },
+    "welcome": {
+        "channel": "Hier werden neue Mitglieder begrüßt.",
+        "message": "Der Begrüßungstext. {user} = die Person, {server} = Servername.",
+        "auto_roles": "Diese Rollen bekommt jeder automatisch beim Beitreten.",
+        "leave_enabled": "Nachricht, wenn jemand den Server verlässt.",
+    },
+    "tickets": {
+        "panel_channel": "Hier steht der Knopf „Ticket öffnen“.",
+        "category": "In diese Kategorie kommen neue Tickets.",
+        "staff_roles": "Wer Tickets sehen und beantworten darf.",
+        "transcript_channel": "Hier landet der Verlauf geschlossener Tickets.",
+    },
+    "applications": {
+        "panel_channel": "Hier steht der Knopf „Bewerben“.",
+        "review_channel": "Hier sieht dein Team die Bewerbungen.",
+        "positions": "Wofür man sich bewerben kann – eins pro Zeile.",
+        "accept_role": "Diese Rolle bekommt man bei Annahme.",
+    },
+    "giveaways": {
+        "default_channel": "Hier werden Giveaways gepostet.",
+        "ping_role": "Diese Rolle wird beim Start gepingt.",
+        "dm_winners": "Gewinner bekommen eine DM.",
+    },
+    "levels": {
+        "announce": "Ob und wo Level-Ups angekündigt werden. „Aus“ = keine Level-Up-Nachrichten.",
+        "announce_channel": "Nur bei „In festem Channel“: hier kommen die Level-Ups hin.",
+        "announce_message": "Text beim Level-Up. {user} = Person, {level} = neues Level.",
+        "no_xp_channels": "In diesen Channels gibt es keine XP (z. B. Spam-Channel).",
+    },
+    "economy": {
+        "currency_name": "Wie euer Geld heißt.",
+        "currency_emoji": "Emoji für euer Geld.",
+        "daily_amount": "So viel gibt es bei /daily.",
+        "rob_enabled": "Mitglieder dürfen sich gegenseitig ausrauben (/rob).",
+        "gambling_enabled": "Glücksspiel mit Coins erlauben (/slots, /bet).",
+    },
+    "music": {
+        "dj_role": "Diese Rolle darf die Musik komplett steuern.",
+        "allowed_channels": "Musik-Befehle nur in diesen Channels. Leer = überall.",
+    },
+    "suggestions": {
+        "channel": "Hierhin kommen die Vorschläge (Channel oder Forum).",
+        "staff_roles": "Wer Vorschläge annehmen oder ablehnen darf.",
+    },
+    "verification": {
+        "channel": "Hier steht der Knopf „Verifizieren“.",
+        "verified_role": "Diese Rolle bekommt man nach dem Verifizieren.",
+        "mode": "Wie verifiziert wird.",
+    },
+    "antiraid": {
+        "alert_channel": "Hier warnt der Bot, wenn plötzlich sehr viele Leute joinen.",
+        "actions": "Was der Bot bei einem Raid automatisch macht.",
+    },
+}
+
+for _spec in MODULES:
+    _basic = BASIC.get(_spec.key)
+    if _basic:
+        for _f in _spec.fields:
+            if _f.key in _basic:
+                _f.help = _f.help or _basic[_f.key]
+            else:
+                _f.advanced = True
 
 MODULE_MAP: dict[str, ModuleSpec] = {m.key: m for m in MODULES}
 

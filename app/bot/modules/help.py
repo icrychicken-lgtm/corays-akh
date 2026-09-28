@@ -58,12 +58,16 @@ class Help(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    async def _visible(self, guild_id: int | None) -> list[app_commands.Command]:
+    async def _visible(self, guild_id: int | None, member: discord.abc.User | None = None) -> list[app_commands.Command]:
+        """Aktive Commands – und nur die, die `member` laut Discord-Rechten überhaupt nutzen darf (kein Mod-Kram für alle)."""
         toggles = await config.all_toggles(guild_id) if guild_id else {}
+        perms = member.guild_permissions if isinstance(member, discord.Member) else None
         out = []
         for root in self.bot.tree.get_commands(type=discord.AppCommandType.chat_input):
             mod = module_of(root) if not isinstance(root, app_commands.Group) else module_of(next(iter(root.walk_commands()), None))
             if guild_id and mod != "core" and not toggles.get(mod, True):
+                continue
+            if perms is not None and root.default_permissions is not None and not root.default_permissions <= perms:
                 continue
             out.extend(_flatten(root))  # type: ignore[arg-type]
         return out
@@ -71,7 +75,7 @@ class Help(commands.Cog):
     async def category_embed(self, interaction: discord.Interaction, key: str) -> discord.Embed:
         _ = await i18n.for_guild(interaction.guild_id)
         th = await theme(interaction.guild)
-        cmds = [c for c in await self._visible(interaction.guild_id) if _category(c.root_parent or c) == key]
+        cmds = [c for c in await self._visible(interaction.guild_id, interaction.user) if _category(c.root_parent or c) == key]
         emoji = dict(CATEGORIES).get(key, "•")
         lines =[f"`/{c.qualified_name}` — {c.description}" for c in sorted(cmds, key=lambda c: c.qualified_name)]
         e = th.embed(f"{emoji}  {_('help.cat.' + key)}", "\n".join(lines)[:4000] or _("help.empty"), icon=False)
@@ -82,7 +86,7 @@ class Help(commands.Cog):
     async def help(self, interaction: discord.Interaction, command: str | None = None):
         _ = await i18n.for_guild(interaction.guild_id)
         th = await theme(interaction.guild)
-        visible = await self._visible(interaction.guild_id)
+        visible = await self._visible(interaction.guild_id, interaction.user)
         if command:
             match = next((c for c in visible if c.qualified_name == command.strip("/ ").lower()), None)
             if not match:
@@ -114,7 +118,7 @@ class Help(commands.Cog):
     @help.autocomplete("command")
     async def _ac(self, interaction: discord.Interaction, current: str):
         cur = current.lower().strip("/ ")
-        names = sorted({c.qualified_name for c in await self._visible(interaction.guild_id)})
+        names = sorted({c.qualified_name for c in await self._visible(interaction.guild_id, interaction.user)})
         return [app_commands.Choice(name=f"/{n}", value=n) for n in names if cur in n][:25]
 
 
