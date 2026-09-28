@@ -1,4 +1,4 @@
-"""Onboarding: /setup (Auto-Einrichtung mit einem Klick), /guide (verständliche Erklärungen), Begrüßung beim Server-Beitritt."""
+"""Onboarding: /setup (vorhandene Channels/Rollen auswählen – erstellt nichts, leer = aus), /guide (verständliche Erklärungen), Begrüßung beim Server-Beitritt."""
 from __future__ import annotations
 
 import logging
@@ -36,7 +36,7 @@ TEXT_TYPES = [discord.ChannelType.text, discord.ChannelType.news]
 
 
 class _PickMixin:
-    """Merkt sich die Auswahl (leer lassen = nicht gesetzt); gespeichert wird erst mit „Speichern“."""
+    """Merkt sich die Auswahl (leer = Funktion aus); gespeichert wird erst mit „Speichern“."""
     setup_view: "SetupView"
     module: str
     key: str
@@ -116,19 +116,41 @@ class SetupView(BaseView):
         await interaction.response.edit_message(embed=self.embed_for(await theme(self.guild)), view=self)
 
     async def save(self, interaction: discord.Interaction):
+        """Speichert ALLE Felder: Was leer ist, wird ausgeschaltet – nicht nur „nicht geändert“."""
         _ = self._
+        await interaction.response.defer()
+        final = {k: self.changes.get(k, str(v) if v else None) for k, v in self.current.items()}
         by_module: dict[str, dict[str, str | None]] = {}
-        for (module, key), value in self.changes.items():
+        for (module, key), value in final.items():
             by_module.setdefault(module, {})[key] = value
         for module, values in by_module.items():
             cfg = dict(await config.get(self.guild.id, module))
             cfg.update(values)
-            if module == "levels" and "announce_channel" in values:
+            enabled = None
+            if module == "levels":
                 cfg["announce"] = "custom" if values["announce_channel"] else "off"  # kein Channel = keine Level-Up-Nachrichten
-            await config.save(self.guild.id, module, settings=cfg)
+            elif module == "streamer":
+                cfg["clips_enabled"] = cfg["clip_week"] = bool(values["clips_channel"])  # kein Clip-Channel = keine Clip-Posts
+            elif module in ("welcome", "suggestions"):
+                enabled = bool(values["channel"])  # kein Channel = Funktion aus
+            await config.save(self.guild.id, module, settings=cfg, enabled=enabled)
+        # Vorschläge laufen übers Formular: Knopf „Vorschlag einreichen“ in den (neu gewählten) Channel posten
+        ideas = self.changes.get(("suggestions", "channel"))
+        if ideas and ideas != str(self.current.get(("suggestions", "channel")) or ""):
+            try:
+                await self.cog.bot.get_cog("Suggestions").send_panel(self.guild)  # type: ignore[union-attr]
+            except Exception as exc:  # noqa: BLE001
+                log.info("Vorschlags-Panel nicht gesendet: %s", exc)
         await audit(self.guild.id, interaction.user.id, str(interaction.user), "setup.pick", f"{len(self.changes)} geändert", source="bot")
+        lines = []
+        for page in SETUP_PAGES:
+            for module, key, kind, label in page:
+                value = final[(module, key)]
+                name = _(label.replace("pick_", "short_"))
+                mention = (f"<@&{value}>" if kind == "role" else f"<#{value}>") if value else None
+                lines.append(f"✅ {name}: {mention}" if mention else f"⛔ {name}: **{_('setup.off')}**")
         th = await theme(self.guild)
-        await interaction.response.edit_message(embed=th.success(_("setup.saved_title"), _("setup.saved", count=len(self.changes))), view=None)
+        await interaction.edit_original_response(embed=th.success(_("setup.saved_title"), "\n".join(lines) + "\n\n" + _("setup.saved")), view=None)
         self.stop()
 
 

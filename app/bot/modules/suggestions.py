@@ -32,16 +32,18 @@ class SuggestPanelButton(discord.ui.DynamicItem[discord.ui.Button], template=r"n
 
     async def callback(self, interaction: discord.Interaction):
         _ = await i18n.for_guild(interaction.guild_id)
-        await interaction.response.send_modal(SuggestModal(_("sg.modal_title"), _("sg.modal_label")))
+        await interaction.response.send_modal(SuggestModal(_("sg.modal_title"), _("sg.modal_label"), _("sg.modal_placeholder")))
 
 
 class SuggestModal(discord.ui.Modal):
-    def __init__(self, title: str, label: str):
+    def __init__(self, title: str, label: str, placeholder: str = ""):
         super().__init__(title=title[:45])
-        self.text = discord.ui.TextInput(label=label[:45], style=discord.TextStyle.paragraph, min_length=10, max_length=2000)
+        self.text = discord.ui.TextInput(label=label[:45], style=discord.TextStyle.paragraph, min_length=10, max_length=2000,
+                                         placeholder=placeholder[:100] or None)
         self.add_item(self.text)
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         await interaction.client.get_cog("Suggestions").create(interaction, self.text.value)  # type: ignore[union-attr]
 
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
@@ -223,14 +225,10 @@ class Suggestions(commands.Cog):
                     pass
         return s
 
-    @app_commands.command(name="suggest", description="Reiche einen Vorschlag für den Server ein")
-    async def suggest(self, interaction: discord.Interaction, idea: app_commands.Range[str, 10, 2000] | None = None):
-        if idea:
-            await interaction.response.defer(ephemeral=True)
-            await self.create(interaction, idea)
-        else:
-            _ = await i18n.for_guild(interaction.guild_id)
-            await interaction.response.send_modal(SuggestModal(_("sg.modal_title"), _("sg.modal_label")))
+    @app_commands.command(name="suggest", description="Öffnet das Formular für deinen Vorschlag")
+    async def suggest(self, interaction: discord.Interaction):
+        _ = await i18n.for_guild(interaction.guild_id)
+        await interaction.response.send_modal(SuggestModal(_("sg.modal_title"), _("sg.modal_label"), _("sg.modal_placeholder")))
 
 
 async def setup(bot: commands.Bot):
