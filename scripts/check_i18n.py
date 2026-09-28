@@ -23,6 +23,8 @@ DYNAMIC = {
     "apps.status.": ["open", "in_review", "accepted", "rejected"],
     "sg.status.": ["pending", "accepted", "denied", "considered"],
     "sg.btn.": ["accepted", "denied", "considered"],
+    "cc.st.": ["pending", "approved", "denied"],
+    "cc.dm_": ["approve", "approve_title", "deny", "deny_title"],
     "ev.st.": ["scheduled", "live", "ended", "cancelled"],
     "quests.": ["daily", "weekly"],
     "tv.": ["rename", "limit", "lock", "kick", "block", "delete", "done_kick", "done_block"],

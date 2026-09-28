@@ -330,7 +330,7 @@ MODULES: list[ModuleSpec] = [
         ]),
         F("no_xp_channels", "channels", "Keine XP in Channels", [], group="XP"),
         F("no_xp_roles", "roles", "Keine XP für Rollen", [], group="XP"),
-        F("announce", "select", "Level-Up-Nachricht", "channel", options=[("channel", "Im selben Channel"), ("custom", "In festem Channel"), ("dm", "Per DM"), ("off", "Aus")], group="Level-Up"),
+        F("announce", "select", "Level-Up-Nachricht", "off", options=[("channel", "Im selben Channel"), ("custom", "In festem Channel"), ("dm", "Per DM"), ("off", "Aus")], group="Level-Up"),
         F("announce_channel", "channel", "Fester Level-Up-Channel", None, group="Level-Up"),
         F("announce_message", "text", "Nachricht", "🎉 {user} du bist jetzt **Level {level}**!", group="Level-Up"),
         F("stack_rewards", "bool", "Belohnungsrollen behalten (stapeln)", True, group="Level-Up"),
@@ -429,6 +429,29 @@ MODULES: list[ModuleSpec] = [
         F("chat_watch_words", "strlist", "Warnwörter im Twitch-Chat – Mods bekommen sofort einen Alarm", [],
           help="z. B. Beleidigungen, Namen, Adressen, Links – Groß/Klein egal", group="Twitch-Chat-Wächter"),
         F("chat_watch_channel", "channel", "Alarm-Channel für den Chat-Wächter (leer = Mod-Log)", None, group="Twitch-Chat-Wächter"),
+    ]),
+    ModuleSpec("clipcontest", "Clip-Contest", "🎬", "Clip-Wettbewerb: TikTok/YouTube/Instagram-Clips einreichen, Aufrufe sammeln, Preise gewinnen",
+               category="streamer", fields=[
+        F("review_channel", "channel", "Channel, in den eingereichte Clips kommen (Team prüft dort)", None, group="Channels & Team"),
+        F("announce_channel", "channel", "Standard-Channel für Ankündigung & Ergebnisse", None, group="Channels & Team"),
+        F("staff_roles", "roles", "Wer darf Clips prüfen & Aufrufe bestätigen (leer = Mods)", [], group="Channels & Team"),
+        F("ping_role", "role", "Rolle bei Start & Ende pingen", None, group="Channels & Team"),
+        F("platforms", "multiselect", "Erlaubte Plattformen", ["tiktok"], options=[
+            ("tiktok", "TikTok"), ("youtube", "YouTube Shorts"), ("instagram", "Instagram Reels")], group="Regeln"),
+        F("max_per_user", "int", "Max. Clips pro Person", 5, min=1, max=100, group="Regeln"),
+        F("rules", "text", "Regeln (erscheinen in der Ankündigung)",
+          "• Nur Clips aus den Streams von **{streamer}**\n• Streamer im Video markieren + Hashtag **{hashtag}**\n"
+          "• Clip muss **während** des Contests hochgeladen worden sein\n• Gekaufte Views / Bots = Disqualifikation\n"
+          "• Aufrufe zählen erst, wenn das Team sie bestätigt hat", max_len=1500, group="Regeln"),
+        F("streamer_name", "str", "Name des Streamers (für {streamer})", "Coray", max_len=60, group="Regeln"),
+        F("hashtag", "str", "Pflicht-Hashtag (für {hashtag})", "#corayclips", max_len=60, group="Regeln"),
+        F("currency", "str", "Währung", "€", max_len=10, group="Geld pro Aufrufe"),
+        F("pay_tiers", "objlist", "Auszahlungs-Stufen pro Clip (höchste erreichte Stufe zählt)", [
+            {"views": 5000, "amount": 2.0}, {"views": 10000, "amount": 4.0}, {"views": 25000, "amount": 8.0},
+            {"views": 50000, "amount": 15.0}, {"views": 100000, "amount": 25.0}, {"views": 250000, "amount": 50.0},
+            {"views": 500000, "amount": 80.0}, {"views": 1000000, "amount": 120.0}],
+          help="Clip mit 30.000 Aufrufen → Stufe 25.000 → 8 €. Unter der ersten Stufe gibt es nichts.", group="Geld pro Aufrufe", fields=[
+            F("views", "int", "Ab Aufrufen", 5000, min=1, max=10_000_000_000), F("amount", "float", "Betrag", 0, min=0, max=1_000_000)]),
     ]),
     ModuleSpec("gangs", "Gangs", "🏴", "Crews gründen, Mitglieder einladen, Gang-Kasse und Rangliste", fields=[
         F("create_cost", "int", "Kosten zum Gründen (Coins)", 5000, min=0, max=100_000_000),

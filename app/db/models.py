@@ -699,6 +699,42 @@ class GangMember(Base):
     joined_at: Mapped[datetime] = _created()
 
 
+# ───────────────────────── Clip-Contest ─────────────────────────
+class ClipContest(Base):
+    """Clip-Wettbewerb über einen Zeitraum: Community reicht TikTok/YouTube/Instagram-Clips ein, Aufrufe entscheiden."""
+    __tablename__ = "clip_contests"
+    id: Mapped[int] = _id()
+    guild_id: Mapped[int] = _guild()
+    name: Mapped[str] = mapped_column(String(100))
+    channel_id: Mapped[int] = mapped_column(BigInteger)           # Ankündigung + Einreichen-Button
+    message_id: Mapped[int | None] = mapped_column(BigInteger)
+    host_id: Mapped[int] = mapped_column(BigInteger)
+    starts_at: Mapped[datetime] = _created()
+    ends_at: Mapped[datetime] = mapped_column(TS)
+    ended: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+
+class ClipSubmission(Base):
+    __tablename__ = "clip_submissions"
+    id: Mapped[int] = _id()
+    contest_id: Mapped[int] = mapped_column(ForeignKey("clip_contests.id", ondelete="CASCADE"), index=True)
+    guild_id: Mapped[int] = _guild()
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    user_name: Mapped[str] = mapped_column(String(100), default="")
+    url: Mapped[str] = mapped_column(String(300))
+    platform: Mapped[str] = mapped_column(String(12))              # tiktok | youtube | instagram
+    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending | approved | denied
+    views: Mapped[int] = mapped_column(BigInteger, default=0)      # vom Team bestätigt – nur diese zählen
+    claimed_views: Mapped[int | None] = mapped_column(BigInteger)  # vom Einreicher gemeldet, wartet auf Bestätigung
+    proof_url: Mapped[str | None] = mapped_column(String(500))
+    message_id: Mapped[int | None] = mapped_column(BigInteger)
+    reviewer_id: Mapped[int | None] = mapped_column(BigInteger)
+    paid: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime | None] = mapped_column(TS)
+    __table_args__ = (UniqueConstraint("contest_id", "url"),)
+
+
 # ───────────────────────── Logs / Analytics / Betrieb ─────────────────────────
 class LogEntry(Base):
     __tablename__ = "log_entries"
