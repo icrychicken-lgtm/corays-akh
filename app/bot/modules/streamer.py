@@ -155,19 +155,12 @@ class StreamerCog(commands.Cog, name="StreamerCog"):
         return v
 
     async def ensure_live_channel(self, guild: discord.Guild) -> discord.TextChannel | None:
-        """Kein Live-Channel eingestellt? Vorhandenen #stream-alerts/#live nehmen oder anlegen – sonst gingen Live-Posts ins Leere."""
+        """Kein Live-Channel eingestellt? Vorhandenen #stream-alerts/#live nehmen. Erstellt wird nie etwas – dafür gibt es /setup."""
         cfg = await config.get(guild.id, "streamer")
         ch = guild.get_channel(cfg.id("default_channel") or 0)
         if isinstance(ch, discord.TextChannel):
             return ch
         ch = next((c for c in guild.text_channels if ("stream-alert" in c.name.lower() or "live-alert" in c.name.lower() or c.name.lower().lstrip("🔴・-_ ").startswith("live"))), None)
-        if ch is None and guild.me.guild_permissions.manage_channels:
-            ow = {guild.default_role: discord.PermissionOverwrite(send_messages=False, add_reactions=True),
-                  guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True, mention_everyone=True)}
-            try:
-                ch = await guild.create_text_channel("🔴・stream-alerts", overwrites=ow, topic="Live-Benachrichtigungen", reason="Kein Live-Channel eingestellt")
-            except discord.HTTPException:
-                return None
         if ch is not None:
             data = dict(cfg)
             data["default_channel"] = str(ch.id)

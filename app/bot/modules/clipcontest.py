@@ -224,23 +224,15 @@ class ClipContestCog(commands.Cog, name="ClipContest"):
             raise UserError("cc.no_contest")
         return c
 
-    async def review_channel(self, guild: discord.Guild) -> discord.TextChannel:
-        """Prüf-Channel aus den Einstellungen – fehlt er, legt der Bot ihn selbst an (nur fürs Team sichtbar)."""
+    async def review_channel(self, guild: discord.Guild, pick: discord.TextChannel | None = None) -> discord.TextChannel:
+        """Prüf-Channel: der beim Start ausgewählte (wird gemerkt) oder der gespeicherte. Der Bot erstellt nie selbst einen."""
         cfg = await config.get(guild.id, "clipcontest")
+        if pick is not None:
+            await config.save(guild.id, "clipcontest", settings={**cfg, "review_channel": str(pick.id)})
+            return pick
         ch = guild.get_channel(cfg.id("review_channel") or 0)
-        if isinstance(ch, discord.TextChannel):
-            return ch
-        general = await config.get(guild.id, "general")
-        overwrites: dict = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True, attach_files=True)}
-        for rid in {*cfg.ids("staff_roles"), *general.ids("staff_roles"), *general.ids("admin_roles")}:
-            if role := guild.get_role(rid):
-                overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
-        try:
-            ch = await guild.create_text_channel("🎬・clip-prüfung", overwrites=overwrites, reason="Clip-Contest: Prüf-Channel")
-        except discord.Forbidden:
-            raise UserError("cc.no_manage_channels")
-        await config.save(guild.id, "clipcontest", settings={**cfg, "review_channel": str(ch.id)})
+        if not isinstance(ch, discord.TextChannel):
+            raise UserError("cc.no_review_channel")
         return ch
 
     async def submissions(self, contest_id: int) -> list[ClipSubmission]:
@@ -539,9 +531,10 @@ class ClipContestCog(commands.Cog, name="ClipContest"):
     # ───────────── /clipcontest (Team) ─────────────
     @contest.command(name="start", description="Startet einen Clip-Contest und postet die Ankündigung")
     @app_commands.describe(name="Name, z. B. Coray Clip-Contest", dauer="Wie lange? z. B. 60d = 2 Monate, 30d = 1 Monat",
-                           channel="Wo soll die Ankündigung hin? (leer = dieser Channel)")
+                           channel="Wo soll die Ankündigung hin? (leer = dieser Channel)",
+                           pruefchannel="Wo prüft das Team die Clips? Am besten ein Channel, den nur das Team sieht (wird gemerkt)")
     async def start_cmd(self, interaction: discord.Interaction, name: app_commands.Range[str, 3, 100], dauer: str = "60d",
-                        channel: discord.TextChannel | None = None):
+                        channel: discord.TextChannel | None = None, pruefchannel: discord.TextChannel | None = None):
         await self.require_staff(interaction)
         _ = await i18n.for_guild(interaction.guild_id)
         secs = parse_duration(dauer)
@@ -549,9 +542,9 @@ class ClipContestCog(commands.Cog, name="ClipContest"):
             raise UserError("cc.bad_duration")
         if await self.active(interaction.guild_id):
             raise UserError("cc.already_running")
+        review = await self.review_channel(interaction.guild, pruefchannel)
         await interaction.response.defer(ephemeral=True)
         cfg = await config.get(interaction.guild_id, "clipcontest")
-        review = await self.review_channel(interaction.guild)
         target = channel or interaction.guild.get_channel(cfg.id("announce_channel") or 0) or interaction.channel
         async with session_scope() as db:
             c = ClipContest(guild_id=interaction.guild_id, name=name, channel_id=target.id, host_id=interaction.user.id,
