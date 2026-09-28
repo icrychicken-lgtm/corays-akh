@@ -25,26 +25,110 @@ log = logging.getLogger("nova.onboarding")
 
 
 
-class SetupView(BaseView):
-    def __init__(self, cog: "Onboarding", owner_id: int, labels: tuple[str, str]):
-        super().__init__(owner_id=owner_id, timeout=300)
-        self.cog = cog
-        self.go.label, self.cancel.label = labels
+# /setup erstellt NICHTS – man wählt nur vorhandene Channels/Rollen aus. (modul, key, art, label-key)
+SETUP_PAGES: list[list[tuple[str, str, str, str]]] = [
+    [("streamer", "default_channel", "channel", "setup.pick_live"), ("streamer", "default_role", "role", "setup.pick_ping"),
+     ("streamer", "clips_channel", "channel", "setup.pick_clips"), ("clipcontest", "review_channel", "channel", "setup.pick_review")],
+    [("welcome", "channel", "channel", "setup.pick_welcome"), ("moderation", "log_channel", "channel", "setup.pick_modlog"),
+     ("levels", "announce_channel", "channel", "setup.pick_levels"), ("suggestions", "channel", "channel", "setup.pick_ideas")],
+]
+TEXT_TYPES = [discord.ChannelType.text, discord.ChannelType.news]
 
-    @discord.ui.button(style=discord.ButtonStyle.success, emoji="⚡")
-    async def go(self, interaction: discord.Interaction, _b: discord.ui.Button):
+
+class _PickMixin:
+    """Merkt sich die Auswahl (leer lassen = nicht gesetzt); gespeichert wird erst mit „Speichern“."""
+    setup_view: "SetupView"
+    module: str
+    key: str
+
+    async def callback(self, interaction: discord.Interaction):
+        self.setup_view.changes[(self.module, self.key)] = str(self.values[0].id) if self.values else None  # type: ignore[attr-defined]
         await interaction.response.defer()
-        lines = await self.cog.auto_setup(interaction.guild, interaction.user)
-        _ = await i18n.for_guild(interaction.guild_id)
-        th = await theme(interaction.guild)
-        e = th.success(_("setup.done_title"), "\n".join(lines))
-        e.add_field(name=_("setup.next_title"), value=_("setup.next_text", url=settings.dashboard_url), inline=False)
-        await interaction.edit_original_response(embed=e, view=None)
-        self.stop()
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, _b: discord.ui.Button):
-        await interaction.response.edit_message(view=None)
+
+class SetupChannelPick(_PickMixin, discord.ui.ChannelSelect):
+    pass
+
+
+class SetupRolePick(_PickMixin, discord.ui.RoleSelect):
+    pass
+
+
+def setup_pick(view: "SetupView", module: str, key: str, kind: str, placeholder: str, current, row: int) -> discord.ui.Item:
+    kw = dict(placeholder=placeholder[:150], min_values=0, max_values=1, row=row, default_values=[current] if current else [])
+    item = SetupRolePick(**kw) if kind == "role" else SetupChannelPick(channel_types=TEXT_TYPES, **kw)
+    item.setup_view, item.module, item.key = view, module, key
+    return item
+
+
+class SetupView(BaseView):
+    def __init__(self, cog: "Onboarding", owner_id: int, guild: discord.Guild, _):
+        super().__init__(owner_id=owner_id, timeout=600)
+        self.cog, self.guild, self._ = cog, guild, _
+        self.page = 0
+        self.changes: dict[tuple[str, str], str | None] = {}
+        self.current: dict[tuple[str, str], int | None] = {}
+
+    async def load(self) -> "SetupView":
+        for page in SETUP_PAGES:
+            for module, key, _kind, _label in page:
+                self.current[(module, key)] = (await config.get(self.guild.id, module)).id(key)
+        self.build()
+        return self
+
+    def _value(self, module: str, key: str, kind: str):
+        raw = self.changes.get((module, key), self.current.get((module, key)))
+        if not raw:
+            return None
+        obj = self.guild.get_role(int(raw)) if kind == "role" else self.guild.get_channel(int(raw))
+        return obj
+
+    def build(self) -> None:
+        _ = self._
+        self.clear_items()
+        for row, (module, key, kind, label) in enumerate(SETUP_PAGES[self.page]):
+            self.add_item(setup_pick(self, module, key, kind, _(label), self._value(module, key, kind), row))
+        if self.page > 0:
+            self.add_item(self._button(_("setup.back"), "◀️", discord.ButtonStyle.secondary, self.back))
+        if self.page < len(SETUP_PAGES) - 1:
+            self.add_item(self._button(_("setup.next"), "▶️", discord.ButtonStyle.primary, self.forward))
+        self.add_item(self._button(_("setup.save"), "💾", discord.ButtonStyle.success, self.save))
+
+    @staticmethod
+    def _button(label: str, emoji: str, style: discord.ButtonStyle, cb) -> discord.ui.Button:
+        b = discord.ui.Button(label=label, emoji=emoji, style=style, row=4)
+        b.callback = cb
+        return b
+
+    def embed_for(self, th) -> discord.Embed:
+        _ = self._
+        return th.embed(_(f"setup.page{self.page + 1}_title"), _(f"setup.page{self.page + 1}_text"), icon=False) \
+            .set_footer(text=_("setup.footer", page=self.page + 1, pages=len(SETUP_PAGES)))
+
+    async def forward(self, interaction: discord.Interaction):
+        self.page += 1
+        self.build()
+        await interaction.response.edit_message(embed=self.embed_for(await theme(self.guild)), view=self)
+
+    async def back(self, interaction: discord.Interaction):
+        self.page -= 1
+        self.build()
+        await interaction.response.edit_message(embed=self.embed_for(await theme(self.guild)), view=self)
+
+    async def save(self, interaction: discord.Interaction):
+        _ = self._
+        by_module: dict[str, dict[str, str | None]] = {}
+        for (module, key), value in self.changes.items():
+            by_module.setdefault(module, {})[key] = value
+        for module, values in by_module.items():
+            cfg = dict(await config.get(self.guild.id, module))
+            cfg.update(values)
+            if module == "levels" and "announce_channel" in values:
+                cfg["announce"] = "custom" if values["announce_channel"] else "off"  # kein Channel = keine Level-Up-Nachrichten
+            await config.save(self.guild.id, module, settings=cfg)
+        await audit(self.guild.id, interaction.user.id, str(interaction.user), "setup.pick", f"{len(self.changes)} geändert", source="bot")
+        th = await theme(self.guild)
+        await interaction.response.edit_message(embed=th.success(_("setup.saved_title"), _("setup.saved", count=len(self.changes))), view=None)
         self.stop()
 
 
@@ -65,108 +149,20 @@ class Onboarding(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ── Auto-Setup (auch vom Dashboard genutzt) ──
+    # ── Setup: nur auswählen, nie erstellen ──
     async def auto_setup(self, guild: discord.Guild, actor: discord.abc.User) -> list[str]:
-        _ = await i18n.for_guild(guild.id)
-        me = guild.me
-        if not (me.guild_permissions.manage_channels and me.guild_permissions.manage_roles):
-            raise UserError("setup.no_perms")
-        created: list[str] = []
-        reason = f"Auto-Setup durch {actor}"
+        """Früher: Channels/Rollen automatisch erstellen. Abgeschafft – /setup in Discord wählt vorhandene aus."""
+        raise UserError("setup.use_discord")
 
-        async def role(name: str, color: int = 0, mentionable: bool = False) -> discord.Role:
-            r = discord.utils.find(lambda x: x.name.lower() == name.lower(), guild.roles)
-            if r is None:
-                r = await guild.create_role(name=name, colour=discord.Colour(color), mentionable=mentionable, reason=reason)
-                created.append(f"🎭 {r.mention}")
-            return r
-
-        async def category(name: str, private: bool = False) -> discord.CategoryChannel:
-            c = discord.utils.find(lambda x: x.name.lower() == name.lower(), guild.categories)
-            if c is None:
-                ow = {guild.default_role: discord.PermissionOverwrite(view_channel=False), me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True)} if private else {}
-                if private:
-                    for r in guild.roles:
-                        if not r.is_default() and not r.managed and (r.permissions.administrator or r.permissions.manage_guild or r.permissions.moderate_members):
-                            ow[r] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
-                c = await guild.create_category(name, overwrites=ow, reason=reason)
-            return c
-
-        async def text(name: str, cat: discord.CategoryChannel, readonly: bool = False, topic: str = "") -> discord.TextChannel:
-            ch = discord.utils.find(lambda x: x.name == name, guild.text_channels)
-            if ch is None:
-                ow = dict(cat.overwrites)
-                if readonly:
-                    base = ow.get(guild.default_role, discord.PermissionOverwrite())
-                    base.send_messages = False
-                    ow[guild.default_role] = base
-                    ow[me] = discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True)
-                ch = await guild.create_text_channel(name, category=cat, overwrites=ow, topic=topic or None, reason=reason)
-                created.append(f"#️⃣ {ch.mention}")
-            return ch
-
-        stream_ping = await role("🔔 Stream-Ping", 0xC8A45D, mentionable=True)
-        tiers = [await role("Stammzuschauer", 0x9A8C73), await role("Day One", 0xB89B5E), await role("OG Viewer", 0xE0C27A)]
-
-        info = await category("〢 COMMUNITY")
-        welcome = await text("willkommen", info, readonly=True, topic="Willkommen auf dem Server!")
-        alerts = await text("stream-alerts", info, readonly=True, topic="🔴 Live-Benachrichtigungen")
-        clips = await text("clips", info, readonly=True, topic="🎬 Die besten Clips")
-        levels = await text("level-ups", info, readonly=True, topic="⭐ Level-Ups & Achievements")
-        ideas = await text("vorschläge", info, topic="💡 /suggest – deine Ideen")
-        gangnews = await text("gang-news", info, readonly=True, topic="🏴 Gang-News")
-        support = await category("〢 SUPPORT")
-        tickets = await text("tickets", support, readonly=True, topic="🎫 Ticket öffnen")
-        ticket_cat = await category("〢 TICKETS", private=True)
-        staff = await category("〢 STAFF", private=True)
-        modlog = await text("mod-log", staff)
-        botlog = await text("bot-logs", staff)
-        apps = await text("bewerbungen", staff)
-
-        async def patch(module: str, values: dict, enable: bool = True) -> None:
-            cfg = dict(await config.get(guild.id, module))
-            cfg.update(values)
-            await config.save(guild.id, module, settings=cfg, enabled=enable)
-
-        await patch("welcome", {"channel": str(welcome.id)})
-        await patch("levels", {"announce": "custom", "announce_channel": str(levels.id)})
-        await patch("profiles", {"achievement_channel": str(levels.id)})
-        await patch("streamer", {"default_channel": str(alerts.id), "default_role": str(stream_ping.id), "clips_channel": str(clips.id),
-                                 "loyalty_roles": [{"checkins": 5, "role": str(tiers[0].id)}, {"checkins": 25, "role": str(tiers[1].id)},
-                                                   {"checkins": 100, "role": str(tiers[2].id)}]})
-        await patch("moderation", {"log_channel": str(modlog.id)})
-        await patch("logging", {"default_channel": str(botlog.id)})
-        await patch("tickets", {"panel_channel": str(tickets.id), "category": str(ticket_cat.id), "transcript_channel": str(botlog.id)})
-        await patch("applications", {"review_channel": str(apps.id), "panel_channel": str(tickets.id)})
-        await patch("suggestions", {"channel": str(ideas.id)})
-        await patch("gangs", {"announce_channel": str(gangnews.id)})
-
-        from app.bot.modules.tickets import ensure_default_categories
-        await ensure_default_categories(guild.id)
-        for cog_name in ("Tickets", "Suggestions"):
-            cog = self.bot.get_cog(cog_name)
-            try:
-                await cog.send_panel(guild)  # type: ignore[union-attr]
-            except Exception as exc:  # noqa: BLE001
-                log.info("Panel %s nicht gesendet: %s", cog_name, exc)
-        await audit(guild.id, actor.id, str(actor), "setup.auto", f"{len(created)} neu", source="bot")
-        summary = [_("setup.created", count=len(created))] + created[:20]
-        summary.append(_("setup.configured"))
-        return summary
-
-    @app_commands.command(name="setup", description="Richtet den Bot automatisch ein – Channels, Rollen, Tickets, Stream-Alerts")
+    @app_commands.command(name="setup", description="Bot einrichten: wähle deine vorhandenen Channels & Rollen aus (erstellt nichts)")
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
     async def setup_cmd(self, interaction: discord.Interaction):
         if not await is_admin(interaction.user):  # type: ignore[arg-type]
             raise UserError("errors.no_permission")
         _ = await i18n.for_guild(interaction.guild_id)
-        th = await theme(interaction.guild)
-        e = th.embed(_("setup.title"), _("setup.intro"), icon=False)
-        e.add_field(name=_("setup.will_create"), value=_("setup.list"), inline=False)
-        e.set_footer(text=_("setup.footer"))
-        view = SetupView(self, interaction.user.id, (_("setup.start"), _("common.cancel")))
-        await reply(interaction, e, view=view)
+        view = await SetupView(self, interaction.user.id, interaction.guild, _).load()
+        await reply(interaction, view.embed_for(await theme(interaction.guild)), view=view)
 
     # ── Guide ──
     async def guide_embed(self, guild: discord.Guild, topic: str) -> discord.Embed:

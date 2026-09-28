@@ -24,6 +24,8 @@ DYNAMIC = {
     "sg.status.": ["pending", "accepted", "denied", "considered"],
     "sg.btn.": ["accepted", "denied", "considered"],
     "cc.st.": ["pending", "approved", "denied"],
+    "setup.": ["page1_title", "page1_text", "page2_title", "page2_text", "pick_live", "pick_ping", "pick_clips", "pick_review",
+               "pick_welcome", "pick_modlog", "pick_levels", "pick_ideas"],
     "cc.dm_": ["approve", "approve_title", "deny", "deny_title"],
     "ev.st.": ["scheduled", "live", "ended", "cancelled"],
     "quests.": ["daily", "weekly"],

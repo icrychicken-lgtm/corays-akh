@@ -1,4 +1,3 @@
-import { withLoading, confirmDialog, toast, openModal } from "../core.js";
 import { h, clear, fill, gapi, state, statCard, fmtNum, fmtRel, fmtDuration, lineChart, table, pill, onLive, userCell, emptyState, chart, PALETTE } from "../core.js";
 
 export const ACTION_COLOR = { warn: "yellow", timeout: "blue", untimeout: "green", kick: "red", ban: "red", softban: "red", unban: "green" };
@@ -13,20 +12,9 @@ function setupCard() {
     ];
     const done = items.filter(([k]) => st[k]).length;
     if (done === items.length) return;
-    const admin = state.ctx.level === "admin";
-    const btn = h("button.btn.primary", "Auto-Setup starten");
-    btn.addEventListener("click", () => withLoading(btn, async () => {
-      if (!(await confirmDialog({ title: "Server automatisch einrichten?", danger: false, confirmText: "Einrichten",
-        text: "Erstellt Channels (#willkommen, #stream-alerts, #clips, #level-ups, #tickets, Staff-Bereich), Rollen (Stream-Ping, Stammzuschauer …) und verbindet alle Module. Bestehende Channels mit gleichem Namen werden wiederverwendet, nichts wird gelöscht." }))) return;
-      const r = await gapi("/setup/auto", { method: "POST" });
-      toast("Server eingerichtet", "success");
-      openModal({ title: "Fertig eingerichtet", body: h("div.list", r.summary.filter(Boolean).map((l) => h("div.item", l))) });
-      state.meta = null;
-      fill(card);
-    }));
     fill(card, h("div.glass.card.callout.gold", { style: { padding: "20px 22px" } },
-      h("div.row.between", h("div", h("h3", { style: { margin: "0 0 4px" } }, `Einrichtung · ${done}/${items.length} erledigt`),
-        h("div.muted", "Mit einem Klick richtet der Bot Channels, Rollen, Tickets und Stream-Alerts ein.")), admin ? btn : null),
+      h("div", h("h3", { style: { margin: "0 0 4px" } }, `Einrichtung · ${done}/${items.length} erledigt`),
+        h("div.muted", "Am einfachsten: Tippe /setup in Discord und wähle deine vorhandenen Channels und Rollen aus. Es wird nichts neu erstellt.")),
       h("div.chips", { style: { marginTop: "14px" } }, items.map(([k, l]) => h("span.chip" + (st[k] ? ".toggle.on" : ""), `${st[k] ? "✓" : "○"}  ${l}`)))));
   }).catch(() => {});
   return card;
