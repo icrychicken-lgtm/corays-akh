@@ -446,8 +446,7 @@ class StreamHub(commands.Cog, name="StreamHub"):
                  + (f" · {(seg.get('category') or {}).get('name')}" if (seg.get("category") or {}).get("name") else "")
                  for st, s, seg in items[:20]]
         e = discord.Embed(title=_("sh.week_title"), description="\n".join(lines) if lines else _("sh.week_empty"),
-                          colour=th.color("primary"), timestamp=utcnow())
-        e.set_footer(text=th.footer, icon_url=th.icon_url)
+                          colour=th.color("primary"))
         try:
             await ch.send(embed=e)
         except discord.HTTPException:

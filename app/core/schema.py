@@ -382,7 +382,7 @@ MODULES: list[ModuleSpec] = [
         F("allowed_channels", "channels", "Nur in diesen Text-Channels (leer = überall)", []),
     ]),
     ModuleSpec("streamer", "Streamer", "📡", "Twitch, YouTube, Kick – Live-Benachrichtigungen & Stats", category="streamer", fields=[
-        F("style", "select", "Stil der Live-Posts", "hood", options=[("hood", "Hood – Straße, laut, Gang"), ("classic", "Classic"), ("clean", "Clean – minimal")],
+        F("style", "select", "Stil der Live-Posts", "clean", options=[("clean", "Clean – ruhig & übersichtlich (empfohlen)"), ("hood", "Hood – Straße, laut, Gang"), ("classic", "Classic")],
           group="Live-Benachrichtigung"),
         F("default_channel", "channel", "Standard-Channel für Live-Posts", None, group="Live-Benachrichtigung"),
         F("default_role", "role", "Standard-Rolle für @Stream-Notification", None, group="Live-Benachrichtigung"),

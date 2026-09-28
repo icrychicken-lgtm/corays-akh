@@ -104,14 +104,25 @@ class StreamerCog(commands.Cog, name="StreamerCog"):
         cfg = await config.get(guild.id, "streamer")
         pname, color, dot = PLATFORM[s.platform]
         th = await theme(guild)
-        style = cfg.get("style", "hood")
+        style = cfg.get("style", "clean")
         if style == "hood":
             lines = _("stream.hood_lines").split("|")
             line = fill(lines[(session.id if session else s.id) % len(lines)], streamer=s.display_name)
             e = discord.Embed(title=_("stream.hood_title", streamer=s.display_name.upper())[:256], url=info.url,
                               description=f"{line}\n\n**{info.title}**" if info.title else line, colour=th.color("primary"), timestamp=utcnow())
         elif style == "clean":
-            e = discord.Embed(title=(info.title or s.display_name)[:256], url=info.url, colour=discord.Colour.from_str("#2b2b30"), timestamp=utcnow())
+            # Clean: Titel, eine Info-Zeile, großes Vorschaubild – keine Kästchen, keine Fußzeile
+            facts = [info.game] if info.game else []
+            if cfg.get("show_viewers", True):
+                facts.append(_("stream.clean_viewers", n=fmt_num(info.viewers)))
+            if session and session.checkins:
+                facts.append(_("stream.clean_checkins", n=session.checkins))
+            e = discord.Embed(title=(info.title or s.display_name)[:256], url=info.url, description=" · ".join(facts) or None,
+                              colour=th.color("primary"))
+            e.set_author(name=f"{s.display_name} · {pname}", url=info.url, icon_url=s.avatar_url)
+            if info.thumbnail:
+                e.set_image(url=info.thumbnail)
+            return e
         else:
             e = discord.Embed(title=f"🔴 LIVE · {info.title or s.display_name}"[:256], url=info.url, colour=hex_to_color(color), timestamp=utcnow())
         e.set_author(name=f"{s.display_name} · {pname}", url=info.url, icon_url=s.avatar_url)
@@ -133,23 +144,23 @@ class StreamerCog(commands.Cog, name="StreamerCog"):
     async def summary_embed(self, guild: discord.Guild, s: Streamer, session: StreamSession) -> discord.Embed:
         _ = await i18n.for_guild(guild.id)
         lang = await i18n.lang(guild.id)
-        pname, color, dot = PLATFORM[s.platform]
-        e = discord.Embed(title=_("stream.ended_title", name=s.display_name), description=f"**{session.title}**" if session.title else None,
-                          colour=discord.Colour.dark_grey(), timestamp=utcnow())
-        if s.avatar_url:
-            e.set_thumbnail(url=s.avatar_url)
+        pname, _color, _dot = PLATFORM[s.platform]
         dur = ((session.ended_at or utcnow()) - session.started_at).total_seconds()
-        e.add_field(name=_("stream.f_duration"), value=human_duration(dur, lang), inline=True)
-        e.add_field(name=_("stream.f_peak"), value=fmt_num(session.peak_viewers), inline=True)
-        e.add_field(name=_("stream.f_avg"), value=fmt_num(session.avg_viewers), inline=True)
-        e.add_field(name=_("stream.f_game"), value=session.game or "—", inline=True)
-        e.add_field(name=_("stream.f_checkins"), value=str(session.checkins), inline=True)
-        e.set_footer(text=f"{dot} {pname}")
+        # Clean: eine Zusammenfassungs-Zeile statt fünf Kästchen
+        facts = [human_duration(dur, lang), _("stream.clean_peak", n=fmt_num(session.peak_viewers)),
+                 _("stream.clean_avg", n=fmt_num(session.avg_viewers))]
+        if session.game:
+            facts.append(session.game)
+        if session.checkins:
+            facts.append(_("stream.clean_checkins", n=session.checkins))
+        desc = (f"**{session.title}**\n" if session.title else "") + " · ".join(facts)
+        e = discord.Embed(title=_("stream.ended_title", name=s.display_name), description=desc, colour=discord.Colour.dark_grey())
+        e.set_author(name=f"{s.display_name} · {pname}", icon_url=s.avatar_url)
         return e
 
     def _view(self, info_url: str, session_id: int | None, label_watch: str, label_checkin: str | None, ended: bool = False) -> discord.ui.View:
         v = discord.ui.View(timeout=None)
-        v.add_item(discord.ui.Button(label=label_watch, url=info_url, emoji="📺"))
+        v.add_item(discord.ui.Button(label=label_watch, url=info_url))
         if session_id and label_checkin:
             v.add_item(CheckinButton(session_id, label_checkin, disabled=ended))
         return v
@@ -202,7 +213,7 @@ class StreamerCog(commands.Cog, name="StreamerCog"):
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
             role_id = s.ping_role_id or cfg.id("default_role")
             role = f"<@&{role_id}>" if role_id else ""
-            template = s.message_template or cfg.get("message") or _("stream.msg_" + cfg.get("style", "hood"))
+            template = s.message_template or cfg.get("message") or _("stream.msg_" + cfg.get("style", "clean"))
             content = fill(template, streamer=s.display_name, title=info.title, game=info.game, url=info.url, role=role,
                            platform=PLATFORM[s.platform][0])
             if role and "{role}" not in template:
@@ -546,11 +557,10 @@ class StreamerCog(commands.Cog, name="StreamerCog"):
     async def _announce_video(self, guild: discord.Guild, s: Streamer, v) -> None:
         _ = await i18n.for_guild(guild.id)
         th = await theme(guild)
-        e = discord.Embed(title=v.title[:256], url=v.url, colour=hex_to_color("#ff0033"), timestamp=v.published or utcnow())
+        e = discord.Embed(title=v.title[:256], url=v.url, colour=hex_to_color("#ff0033"))
         e.set_author(name=s.display_name, icon_url=s.avatar_url)
         if v.thumbnail:
             e.set_image(url=v.thumbnail)
-        e.set_footer(text=("📱 Short" if v.kind == "short" else "📺 Video") + f" · {th.footer}", icon_url=th.icon_url)
         view = discord.ui.View()
         view.add_item(discord.ui.Button(label=_("stream.watch"), url=v.url, emoji="▶️"))
         msg = await notify(guild, v.kind, embed=e, view=view, streamer=s.display_name, title=v.title, url=v.url, server=guild.name)
@@ -621,7 +631,6 @@ class StreamerCog(commands.Cog, name="StreamerCog"):
                           colour=th.color("primary"), timestamp=utcnow())
         e.set_author(name=name, icon_url=member.display_avatar.url)
         e.set_thumbnail(url=member.display_avatar.url)
-        e.set_footer(text=th.footer, icon_url=th.icon_url)
         view = discord.ui.View()
         view.add_item(discord.ui.Button(label=_("stream.watch"), url=link, emoji="📺"))
         role_id = cfg.id("default_role")

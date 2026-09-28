@@ -145,7 +145,6 @@ class Welcome(commands.Cog):
                 e.set_thumbnail(url=member.display_avatar.with_size(256).url)
                 if cfg.get("image_url"):
                     e.set_image(url=cfg["image_url"])
-                e.set_footer(text=th.footer, icon_url=th.icon_url)
                 await channel.send(content=member.mention, embed=e, allowed_mentions=discord.AllowedMentions(users=True))
             else:
                 await channel.send(text, allowed_mentions=discord.AllowedMentions(users=True))

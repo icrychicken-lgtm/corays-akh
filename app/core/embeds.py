@@ -1,4 +1,7 @@
-"""Einheitliches, konfigurierbares Embed-Design (Success / Error / Warning / Info / Primary)."""
+"""Einheitliches, konfigurierbares Embed-Design (Success / Error / Warning / Info / Primary).
+
+Clean-Stil: Farbe + Titel + Text. Kein Icon vor dem Titel, keine Uhrzeit, keine Fußzeile – außer ein Modul
+setzt sie bewusst (z. B. „Seite 1 von 2“)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,7 +32,8 @@ class Theme:
         return hex_to_color(self.colors.get(kind), DEFAULTS.get(kind, DEFAULTS["primary"]))
 
     def embed(self, title: str | None = None, description: str | None = None, *, kind: str = "primary",
-              user: discord.abc.User | None = None, timestamp: bool = True, icon: bool = True) -> discord.Embed:
+              user: discord.abc.User | None = None, timestamp: bool = False, icon: bool = False, footer: bool = False) -> discord.Embed:
+        """`icon`, `timestamp`, `footer` sind im Clean-Stil aus und nur noch auf ausdrücklichen Wunsch an."""
         prefix = ICONS.get(kind, "") if icon else ""
         e = discord.Embed(
             title=f"{prefix}  {title}".strip() if title else None,
@@ -39,7 +43,8 @@ class Theme:
         )
         if user is not None:
             e.set_author(name=getattr(user, "display_name", str(user)), icon_url=user.display_avatar.url)
-        e.set_footer(text=self.footer, icon_url=self.icon_url)
+        if footer:
+            e.set_footer(text=self.footer, icon_url=self.icon_url)
         return e
 
     def success(self, title: str, description: str | None = None, **kw) -> discord.Embed:
