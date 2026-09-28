@@ -224,6 +224,25 @@ class ClipContestCog(commands.Cog, name="ClipContest"):
             raise UserError("cc.no_contest")
         return c
 
+    async def review_channel(self, guild: discord.Guild) -> discord.TextChannel:
+        """Prüf-Channel aus den Einstellungen – fehlt er, legt der Bot ihn selbst an (nur fürs Team sichtbar)."""
+        cfg = await config.get(guild.id, "clipcontest")
+        ch = guild.get_channel(cfg.id("review_channel") or 0)
+        if isinstance(ch, discord.TextChannel):
+            return ch
+        general = await config.get(guild.id, "general")
+        overwrites: dict = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True, attach_files=True)}
+        for rid in {*cfg.ids("staff_roles"), *general.ids("staff_roles"), *general.ids("admin_roles")}:
+            if role := guild.get_role(rid):
+                overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        try:
+            ch = await guild.create_text_channel("🎬・clip-prüfung", overwrites=overwrites, reason="Clip-Contest: Prüf-Channel")
+        except discord.Forbidden:
+            raise UserError("cc.no_manage_channels")
+        await config.save(guild.id, "clipcontest", settings={**cfg, "review_channel": str(ch.id)})
+        return ch
+
     async def submissions(self, contest_id: int) -> list[ClipSubmission]:
         async with SessionLocal() as db:
             return list((await db.execute(select(ClipSubmission).where(ClipSubmission.contest_id == contest_id))).scalars().all())
@@ -275,9 +294,7 @@ class ClipContestCog(commands.Cog, name="ClipContest"):
         allowed = cfg.get("platforms") or []
         if platform is None or platform not in allowed:
             raise UserError("cc.bad_link", platforms=", ".join(PLATFORMS[p][0] for p in allowed if p in PLATFORMS))
-        review = guild.get_channel(cfg.id("review_channel") or 0)
-        if not isinstance(review, discord.TextChannel):
-            raise UserError("cc.no_review_channel")
+        review = await self.review_channel(guild)
         async with session_scope() as db:
             if (await db.execute(select(ClipSubmission.id).where(ClipSubmission.contest_id == c.id, ClipSubmission.url == url))).first():
                 raise UserError("cc.duplicate")
@@ -377,10 +394,7 @@ class ClipContestCog(commands.Cog, name="ClipContest"):
             raise UserError("cc.denied_clip")
         if c is None or c.ended:
             raise UserError("cc.contest_over")
-        cfg = await config.get(guild.id, "clipcontest")
-        review = guild.get_channel(cfg.id("review_channel") or 0)
-        if not isinstance(review, discord.TextChannel):
-            raise UserError("cc.no_review_channel")
+        review = await self.review_channel(guild)
         # Screenshot neu hochladen – Discord-Anhangs-Links aus Slash-Commands laufen sonst ab
         content = _("cc.proof_msg", user=interaction.user.mention, id=s.id, views=fmt_num(views))
         try:
@@ -524,7 +538,8 @@ class ClipContestCog(commands.Cog, name="ClipContest"):
 
     # ───────────── /clipcontest (Team) ─────────────
     @contest.command(name="start", description="Startet einen Clip-Contest und postet die Ankündigung")
-    @app_commands.describe(name="Name, z. B. Coray Clip-Contest", dauer="z. B. 60d für 2 Monate", channel="Ankündigungs-Channel (Standard: aus den Einstellungen)")
+    @app_commands.describe(name="Name, z. B. Coray Clip-Contest", dauer="Wie lange? z. B. 60d = 2 Monate, 30d = 1 Monat",
+                           channel="Wo soll die Ankündigung hin? (leer = dieser Channel)")
     async def start_cmd(self, interaction: discord.Interaction, name: app_commands.Range[str, 3, 100], dauer: str = "60d",
                         channel: discord.TextChannel | None = None):
         await self.require_staff(interaction)
@@ -534,11 +549,10 @@ class ClipContestCog(commands.Cog, name="ClipContest"):
             raise UserError("cc.bad_duration")
         if await self.active(interaction.guild_id):
             raise UserError("cc.already_running")
-        cfg = await config.get(interaction.guild_id, "clipcontest")
-        if not isinstance(interaction.guild.get_channel(cfg.id("review_channel") or 0), discord.TextChannel):
-            raise UserError("cc.no_review_channel")
-        target = channel or interaction.guild.get_channel(cfg.id("announce_channel") or 0) or interaction.channel
         await interaction.response.defer(ephemeral=True)
+        cfg = await config.get(interaction.guild_id, "clipcontest")
+        review = await self.review_channel(interaction.guild)
+        target = channel or interaction.guild.get_channel(cfg.id("announce_channel") or 0) or interaction.channel
         async with session_scope() as db:
             c = ClipContest(guild_id=interaction.guild_id, name=name, channel_id=target.id, host_id=interaction.user.id,
                             ends_at=utcnow() + timedelta(seconds=secs), ended=False)
@@ -550,7 +564,39 @@ class ClipContestCog(commands.Cog, name="ClipContest"):
         async with session_scope() as db:
             (await db.get(ClipContest, c.id)).message_id = msg.id
         await log_event(interaction.guild_id, "clipcontest", "start", user=interaction.user, content=name, details={"id": c.id})
-        await reply(interaction, (await theme(interaction.guild)).success(_("common.success"), _("cc.started", channel=target.mention, end=ts(c.ends_at, "f"))))
+        await reply(interaction, (await theme(interaction.guild)).success(_("cc.started_title"), _("cc.started", channel=target.mention, review=review.mention,
+                                                                                                                  end=ts(c.ends_at, "f"))))
+
+    @contest.command(name="stufen", description="Zeigt oder ändert, wie viel Geld es pro Aufrufe gibt")
+    @app_commands.describe(neu="Leer = anzeigen. Ändern z. B.: 5k=2, 10k=4, 25k=8, 50k=15, 100k=25")
+    async def tiers_cmd(self, interaction: discord.Interaction, neu: app_commands.Range[str, 1, 500] | None = None):
+        await self.require_staff(interaction)
+        _ = await i18n.for_guild(interaction.guild_id)
+        th = await theme(interaction.guild)
+        cfg = await config.get(interaction.guild_id, "clipcontest")
+        if neu:
+            parsed = []
+            for part in re.split(r"[,;\n]+", neu):
+                if not part.strip():
+                    continue
+                views, _sep, amount = part.partition("=")
+                v = parse_views(views)
+                try:
+                    a = float(amount.strip().replace("€", "").replace(",", ".").strip())
+                except ValueError:
+                    a = None
+                if not v or a is None or a < 0:
+                    raise UserError("cc.bad_tiers", part=part.strip()[:50])
+                parsed.append({"views": v, "amount": a})
+            if not parsed:
+                raise UserError("cc.bad_tiers", part=neu[:50])
+            cfg = {**cfg, "pay_tiers": sorted(parsed, key=lambda t: t["views"])}
+            await config.save(interaction.guild_id, "clipcontest", settings=cfg)
+            cfg = await config.get(interaction.guild_id, "clipcontest")
+            if c := await self.active(interaction.guild_id):
+                await self.refresh_announcement(interaction.guild, c)
+        title = _("cc.tiers_saved") if neu else _("cc.tiers_title")
+        await reply(interaction, th.embed(title, prize_text(cfg, _) + "\n\n" + _("cc.tiers_help"), kind="success" if neu else "primary", icon=False))
 
     @contest.command(name="ende", description="Beendet den laufenden Clip-Contest sofort und postet die Ergebnisse")
     async def end_cmd(self, interaction: discord.Interaction):
