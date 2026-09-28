@@ -127,23 +127,37 @@ class Suggestions(commands.Cog):
             v.add_item(SuggestionButton(s.id, st, _("sg.btn." + st), row=1))
         return v
 
+    @staticmethod
+    def _forum_tags(forum: discord.ForumChannel) -> list[discord.ForumTag]:
+        """Foren mit Pflicht-Tag lehnen Beiträge ohne Tag ab – dann den ersten Tag nehmen."""
+        return forum.available_tags[:1] if forum.flags.require_tag and forum.available_tags else []
+
     async def send_panel(self, guild: discord.Guild) -> discord.Message:
         cfg = await config.get(guild.id, "suggestions")
         ch = guild.get_channel(cfg.id("channel") or 0)
-        if not isinstance(ch, discord.TextChannel):
+        if not isinstance(ch, (discord.TextChannel, discord.ForumChannel)):
             raise UserError("sg.no_channel")
         _ = await i18n.for_guild(guild.id)
         th = await theme(guild)
         v = discord.ui.View(timeout=None)
         v.add_item(SuggestPanelButton(_("sg.submit")))
-        return await ch.send(embed=th.embed(_("sg.panel_title"), cfg.get("panel_text"), icon=False), view=v)
+        embed = th.embed(_("sg.panel_title"), cfg.get("panel_text"), icon=False)
+        if isinstance(ch, discord.TextChannel):
+            return await ch.send(embed=embed, view=v)
+        # Forum: eigener Beitrag mit dem Formular-Knopf, oben angepinnt
+        post = await ch.create_thread(name=_("sg.panel_title")[:100], embed=embed, view=v, applied_tags=self._forum_tags(ch))
+        try:
+            await post.thread.edit(pinned=True)
+        except discord.HTTPException:
+            pass
+        return post.message
 
     async def create(self, interaction: discord.Interaction, content: str) -> None:
         if not await config.enabled(interaction.guild_id, "suggestions"):
             raise UserError("errors.module_disabled")
         cfg = await config.get(interaction.guild_id, "suggestions")
         channel = interaction.guild.get_channel(cfg.id("channel") or 0)
-        if not isinstance(channel, discord.TextChannel):
+        if not isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
             raise UserError("sg.no_channel")
         async with session_scope() as db:
             number = await next_number(db, interaction.guild_id, "next_suggestion")
@@ -151,10 +165,17 @@ class Suggestions(commands.Cog):
                            content=content, status="pending", channel_id=channel.id, upvotes=0, downvotes=0)
             db.add(s)
             await db.flush()
-        msg = await channel.send(embed=await self.embed(interaction.guild, s, interaction.user), view=await self.view(interaction.guild, s))
+        embed, view = await self.embed(interaction.guild, s, interaction.user), await self.view(interaction.guild, s)
+        if isinstance(channel, discord.ForumChannel):
+            # Forum: jeder Vorschlag ist ein eigener Beitrag (Diskussion läuft direkt darin)
+            post = await channel.create_thread(name=f"💡 #{number} – {content[:80]}", embed=embed, view=view, applied_tags=self._forum_tags(channel))
+            msg, s.channel_id = post.message, post.thread.id
+        else:
+            msg = await channel.send(embed=embed, view=view)
         async with session_scope() as db:
-            (await db.get(Suggestion, s.id)).message_id = msg.id
-        if cfg.get("create_thread", True):
+            row = await db.get(Suggestion, s.id)
+            row.message_id, row.channel_id = msg.id, s.channel_id
+        if isinstance(channel, discord.TextChannel) and cfg.get("create_thread", True):
             try:
                 await msg.create_thread(name=f"💡 #{number} – {content[:60]}", auto_archive_duration=10080)
             except discord.HTTPException:
@@ -165,8 +186,8 @@ class Suggestions(commands.Cog):
         await reply(interaction, (await theme(interaction.guild)).success(_("sg.created_title"), _("sg.created", link=msg.jump_url)))
 
     async def _refresh(self, guild: discord.Guild, s: Suggestion) -> None:
-        ch = guild.get_channel(s.channel_id or 0)
-        if isinstance(ch, discord.TextChannel) and s.message_id:
+        ch = guild.get_channel_or_thread(s.channel_id or 0)  # bei Foren: der Beitrag (Thread) des Vorschlags
+        if isinstance(ch, (discord.TextChannel, discord.Thread)) and s.message_id:
             author = guild.get_member(s.user_id)
             try:
                 await ch.get_partial_message(s.message_id).edit(embed=await self.embed(guild, s, author), view=await self.view(guild, s))

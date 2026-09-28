@@ -925,7 +925,7 @@
   "pick_welcome": "👋 Wo werden neue Mitglieder begrüßt?",
   "pick_modlog": "🛡️ Wohin kommt das Mod-Log (Warns, Bans …)?",
   "pick_levels": "⭐ Wohin kommen Level-Ups? (leer = aus)",
-  "pick_ideas": "💡 Wohin kommen Vorschläge (Formular)?",
+  "pick_ideas": "💡 Wohin kommen Vorschläge? (Channel oder Forum)",
   "short_live": "📡 Live-Benachrichtigungen",
   "short_ping": "🔔 Live-Ping",
   "short_clips": "🎬 Twitch-Clips",

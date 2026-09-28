@@ -30,9 +30,10 @@ SETUP_PAGES: list[list[tuple[str, str, str, str]]] = [
     [("streamer", "default_channel", "channel", "setup.pick_live"), ("streamer", "default_role", "role", "setup.pick_ping"),
      ("streamer", "clips_channel", "channel", "setup.pick_clips"), ("clipcontest", "review_channel", "channel", "setup.pick_review")],
     [("welcome", "channel", "channel", "setup.pick_welcome"), ("moderation", "log_channel", "channel", "setup.pick_modlog"),
-     ("levels", "announce_channel", "channel", "setup.pick_levels"), ("suggestions", "channel", "channel", "setup.pick_ideas")],
+     ("levels", "announce_channel", "channel", "setup.pick_levels"), ("suggestions", "channel", "forum_ok", "setup.pick_ideas")],
 ]
 TEXT_TYPES = [discord.ChannelType.text, discord.ChannelType.news]
+FORUM_OK_TYPES = [*TEXT_TYPES, discord.ChannelType.forum]  # Vorschläge dürfen auch in ein Forum
 
 
 class _PickMixin:
@@ -56,7 +57,7 @@ class SetupRolePick(_PickMixin, discord.ui.RoleSelect):
 
 def setup_pick(view: "SetupView", module: str, key: str, kind: str, placeholder: str, current, row: int) -> discord.ui.Item:
     kw = dict(placeholder=placeholder[:150], min_values=0, max_values=1, row=row, default_values=[current] if current else [])
-    item = SetupRolePick(**kw) if kind == "role" else SetupChannelPick(channel_types=TEXT_TYPES, **kw)
+    item = SetupRolePick(**kw) if kind == "role" else SetupChannelPick(channel_types=FORUM_OK_TYPES if kind == "forum_ok" else TEXT_TYPES, **kw)
     item.setup_view, item.module, item.key = view, module, key
     return item
 

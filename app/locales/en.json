@@ -925,7 +925,7 @@
   "pick_welcome": "👋 Where are new members welcomed?",
   "pick_modlog": "🛡️ Where does the mod log go (warns, bans …)?",
   "pick_levels": "⭐ Where do level-ups go? (empty = off)",
-  "pick_ideas": "💡 Where do suggestions go (form)?",
+  "pick_ideas": "💡 Where do suggestions go? (channel or forum)",
   "short_live": "📡 Live notifications",
   "short_ping": "🔔 Live ping",
   "short_clips": "🎬 Twitch clips",
